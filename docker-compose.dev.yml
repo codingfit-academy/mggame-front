@@ -1,0 +1,22 @@
+# ─────────────────────────────────────────────────────────────
+# docker-compose.dev.yml — 로컬 개발 환경
+#
+# 사용:
+#   docker compose -f docker-compose.dev.yml up
+#
+# 또는 그냥:
+#   npm run dev   ← Vite 개발 서버 (더 빠름, 권장)
+# ─────────────────────────────────────────────────────────────
+
+services:
+  front:
+    image: node:22-alpine
+    working_dir: /app
+    volumes:
+      - .:/app
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    command: sh -c "npm install && npm run dev -- --host"
