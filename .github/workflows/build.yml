@@ -18,6 +18,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -88,12 +89,12 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ vars.STUDENT_NAME }}-front
+          images: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ github.event.repository.name }}
           tags: |
             type=sha,prefix=sha-,format=short
             type=raw,value=stable,enable=${{ github.event_name == 'push' }}
           labels: |
-            org.opencontainers.image.title=${{ vars.STUDENT_NAME }}-front
+            org.opencontainers.image.title=${{ github.event.repository.name }}
             org.opencontainers.image.description=Academy Front (React) for ${{ vars.STUDENT_NAME }}
             academy.student=${{ vars.STUDENT_NAME }}
             academy.service=front
@@ -119,7 +120,7 @@ jobs:
             echo "| 항목 | 값 |"
             echo "|---|---|"
             echo "| Student | \`${{ vars.STUDENT_NAME }}\` |"
-            echo "| Image | \`${{ env.REGISTRY }}/${{ env.ORG }}/${{ vars.STUDENT_NAME }}-front\` |"
+            echo "| Image | \`${{ env.REGISTRY }}/${{ env.ORG }}/${{ github.event.repository.name }}\` |"
             echo "| SHA Tag | \`${{ steps.sha.outputs.tag }}\` |"
             echo ""
             echo "➡ 선생님이 어드민 콘솔에서 Deploy 버튼을 누르면 서버에 배포됩니다."
