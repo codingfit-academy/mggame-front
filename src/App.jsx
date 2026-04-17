@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 
 const GAME_WIDTH = 400;
 const GAME_HEIGHT = 600;
@@ -87,7 +87,6 @@ export default function App() {
 
     lastTimeRef.current = time;
     requestRef.current = requestAnimationFrame(gameLoop);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameState]);
 
   useEffect(() => {
@@ -528,14 +527,5 @@ const styles = {
     transition: 'all 0.1s ease-in-out',
     touchAction: 'manipulation',
   },
-};
-
-const styles_hover = {
-  controlButton: {
-    '&:active': {
-      backgroundColor: 'rgba(0, 204, 255, 0.6)',
-      boxShadow: '0 0 20px rgba(0, 204, 255, 0.6)',
-    }
-  }
 };
 
