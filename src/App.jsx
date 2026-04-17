@@ -25,28 +25,52 @@ export default function App() {
   const keysRef = useRef({});
   const difficultyRef = useRef({ speed: 3, spawnRate: 1500, lastSpawn: 0 });
   const scoreRef = useRef(0);
+  const mouseXRef = useRef(null);
+  const touchXRef = useRef(null);
+  const touchDirectionRef = useRef(null); // 'left', 'right', 또는 null
+  const leftButtonRef = useRef(null);
+  const rightButtonRef = useRef(null);
 
   const playerDOMRef = useRef(null);
   const birdsDOMEscape = useRef(null);
+  const gameBoardRef = useRef(null);
 
   useEffect(() => {
     const handleKeyDown = (e) => { keysRef.current[e.key] = true; };
     const handleKeyUp = (e) => { keysRef.current[e.key] = false; };
+    const handleMouseMove = (e) => {
+      if (gameState !== GAME_STATES.PLAYING || !gameBoardRef.current) return;
+      const rect = gameBoardRef.current.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      mouseXRef.current = Math.max(0, Math.min(GAME_WIDTH - PLAYER_SIZE, mouseX - PLAYER_SIZE / 2));
+    };
+
+    // 터치 종료 이벤트는 document 레벨에서 처리
+    const handleTouchEnd = () => {
+      touchDirectionRef.current = null;
+    };
 
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('touchend', handleTouchEnd);
 
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('touchend', handleTouchEnd);
     };
-  }, []);
+  }, [gameState]);
 
   const resetGame = () => {
     playerXRef.current = GAME_WIDTH / 2 - PLAYER_SIZE / 2;
     birdsRef.current = [];
     difficultyRef.current = { speed: 4, spawnRate: 1200, lastSpawn: performance.now() };
     scoreRef.current = 0;
+    mouseXRef.current = null;
+    touchXRef.current = null;
+    touchDirectionRef.current = null;
     setScore(0);
     setGameState(GAME_STATES.PLAYING);
   };
@@ -80,10 +104,15 @@ export default function App() {
     const speed = 7;
     let x = playerXRef.current;
 
-    if (keysRef.current['ArrowLeft'] || keysRef.current['a'] || keysRef.current['A']) {
+    if (mouseXRef.current !== null) {
+      playerXRef.current = mouseXRef.current;
+    } else if (touchDirectionRef.current === 'left') {
       x -= speed;
-    }
-    if (keysRef.current['ArrowRight'] || keysRef.current['d'] || keysRef.current['D']) {
+    } else if (touchDirectionRef.current === 'right') {
+      x += speed;
+    } else if (keysRef.current['ArrowLeft'] || keysRef.current['a'] || keysRef.current['A']) {
+      x -= speed;
+    } else if (keysRef.current['ArrowRight'] || keysRef.current['d'] || keysRef.current['D']) {
       x += speed;
     }
 
@@ -181,7 +210,7 @@ export default function App() {
 
   return (
     <div style={styles.container}>
-      <div style={styles.gameBoard}>
+      <div ref={gameBoardRef} style={styles.gameBoard}>
         {/* Star Background Engine */}
         <div style={styles.starsLayer1} />
         <div style={styles.starsLayer2} />
@@ -212,13 +241,13 @@ export default function App() {
         {gameState === GAME_STATES.START && (
           <div style={styles.overlay}>
             <div style={styles.titleContainer}>
-              <h1 style={styles.title}>ASTRO</h1>
-              <h2 style={styles.subtitle}>SURVIVOR</h2>
+              <h1 style={styles.title}>메테오를 피해라</h1>
+              <h2 style={styles.subtitle}>이민건이 만듬</h2>
             </div>
             <div style={styles.instructionBox}>
-              <p style={styles.instructions}>Controls:</p>
-              <p style={styles.instructionKey}>[A] [D] or [←] [→]</p>
-              <p style={styles.instructions}>Dodge the falling meteors!</p>
+              <p style={styles.instructions}>인계초등학교</p>
+              <p style={styles.instructionKey}>만드는데 힘들었다.</p>
+              <p style={styles.instructions}>10%로 완성</p>
             </div>
             <button
               style={styles.button}
@@ -246,6 +275,31 @@ export default function App() {
             >
               RETRY MISSION
             </button>
+          </div>
+        )}
+
+        {gameState === GAME_STATES.PLAYING && (
+          <div style={styles.mobileController}>
+            <div 
+              ref={leftButtonRef}
+              style={styles.controlButton}
+              onTouchStart={(e) => { e.preventDefault(); touchDirectionRef.current = 'left'; }}
+              onMouseDown={() => { touchDirectionRef.current = 'left'; }}
+              onMouseUp={() => { touchDirectionRef.current = null; }}
+              onMouseLeave={() => { touchDirectionRef.current = null; }}
+            >
+              ◀
+            </div>
+            <div 
+              ref={rightButtonRef}
+              style={styles.controlButton}
+              onTouchStart={(e) => { e.preventDefault(); touchDirectionRef.current = 'right'; }}
+              onMouseDown={() => { touchDirectionRef.current = 'right'; }}
+              onMouseUp={() => { touchDirectionRef.current = null; }}
+              onMouseLeave={() => { touchDirectionRef.current = null; }}
+            >
+              ▶
+            </div>
           </div>
         )}
       </div>
@@ -444,5 +498,44 @@ const styles = {
     boxShadow: '0 0 15px rgba(0, 204, 255, 0.5)',
     transition: 'all 0.2s ease-in-out',
     textTransform: 'uppercase',
+  },
+  mobileController: {
+    position: 'fixed',
+    bottom: 40,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    display: 'flex',
+    gap: '40px',
+    zIndex: 25,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  controlButton: {
+    width: '70px',
+    height: '70px',
+    backgroundColor: 'rgba(0, 204, 255, 0.3)',
+    border: '2px solid #00ccff',
+    borderRadius: '8px',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    fontSize: '32px',
+    color: '#00ccff',
+    fontWeight: 'bold',
+    cursor: 'pointer',
+    userSelect: 'none',
+    boxShadow: '0 0 10px rgba(0, 204, 255, 0.3)',
+    transition: 'all 0.1s ease-in-out',
+    touchAction: 'manipulation',
+  },
+};
+
+const styles_hover = {
+  controlButton: {
+    '&:active': {
+      backgroundColor: 'rgba(0, 204, 255, 0.6)',
+      boxShadow: '0 0 20px rgba(0, 204, 255, 0.6)',
+    }
   }
 };
+
