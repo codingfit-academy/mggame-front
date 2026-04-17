@@ -61,7 +61,7 @@ jobs:
 
   # ── Docker Build & Push ────────────────────────────────────
   docker-build:
-    name: Docker Build${{ github.event_name == 'push' && ' & Push' || '' }}
+    name: Docker Build${{ github.event_name != 'pull_request' && ' & Push' || '' }}
     runs-on: ubuntu-latest
     needs: lint-test
     outputs:
@@ -78,7 +78,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Login to GHCR
-        if: github.event_name == 'push'
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -92,7 +92,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ github.event.repository.name }}
           tags: |
             type=sha,prefix=sha-,format=short
-            type=raw,value=stable,enable=${{ github.event_name == 'push' }}
+            type=raw,value=stable,enable=${{ github.event_name != 'pull_request' }}
           labels: |
             org.opencontainers.image.title=${{ github.event.repository.name }}
             org.opencontainers.image.description=Academy Front (React) for ${{ vars.STUDENT_NAME }}
@@ -104,7 +104,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: ${{ github.event_name == 'push' }}
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
@@ -113,7 +113,7 @@ jobs:
           sbom: false
 
       - name: Summary
-        if: github.event_name == 'push'
+        if: github.event_name != 'pull_request'
         run: |
           {
             echo "## ✅ Build & Push 완료"
