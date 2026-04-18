@@ -45,7 +45,6 @@ export default function App() {
       mouseXRef.current = Math.max(0, Math.min(GAME_WIDTH - PLAYER_SIZE, mouseX - PLAYER_SIZE / 2));
     };
 
-    // 터치 종료 이벤트는 document 레벨에서 처리
     const handleTouchEnd = () => {
       touchDirectionRef.current = null;
     };
@@ -53,13 +52,15 @@ export default function App() {
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('touchend', handleTouchEnd);
+    window.addEventListener('touchend', handleTouchEnd);
+    window.addEventListener('touchcancel', handleTouchEnd);
 
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('touchend', handleTouchEnd);
+      window.removeEventListener('touchend', handleTouchEnd);
+      window.removeEventListener('touchcancel', handleTouchEnd);
     };
   }, [gameState]);
 
@@ -104,7 +105,7 @@ export default function App() {
     let x = playerXRef.current;
 
     if (mouseXRef.current !== null) {
-      playerXRef.current = mouseXRef.current;
+      x = mouseXRef.current;
     } else if (touchDirectionRef.current === 'left') {
       x -= speed;
     } else if (touchDirectionRef.current === 'right') {
@@ -283,6 +284,7 @@ export default function App() {
               ref={leftButtonRef}
               style={styles.controlButton}
               onTouchStart={(e) => { e.preventDefault(); touchDirectionRef.current = 'left'; }}
+              onTouchEnd={(e) => { e.preventDefault(); touchDirectionRef.current = null; }}
               onMouseDown={() => { touchDirectionRef.current = 'left'; }}
               onMouseUp={() => { touchDirectionRef.current = null; }}
               onMouseLeave={() => { touchDirectionRef.current = null; }}
@@ -293,6 +295,7 @@ export default function App() {
               ref={rightButtonRef}
               style={styles.controlButton}
               onTouchStart={(e) => { e.preventDefault(); touchDirectionRef.current = 'right'; }}
+              onTouchEnd={(e) => { e.preventDefault(); touchDirectionRef.current = null; }}
               onMouseDown={() => { touchDirectionRef.current = 'right'; }}
               onMouseUp={() => { touchDirectionRef.current = null; }}
               onMouseLeave={() => { touchDirectionRef.current = null; }}
