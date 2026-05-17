@@ -305,7 +305,7 @@ export default function App() {
     birdsRef.current = remainingBirds;
   };
 
-  const updateAliens = (time) => {
+  const updateAliens = () => {
     // aliens fall like meteors; if they miss the rocket they keep falling and are removed off-screen
     const baseMeteorSpeed = difficultyRef.current?.speed ?? 3;
     const speed = Math.max(1.0, baseMeteorSpeed * 0.8);
@@ -319,7 +319,7 @@ export default function App() {
     aliensRef.current = aliensRef.current.filter(a => a.y <= GAME_HEIGHT + ALIEN_SIZE);
   };
 
-  const updateCoins = (time) => {
+  const updateCoins = () => {
     // 코인 샤워 중에는 천천히 떨어져 한 줄씩 또렷이 보이게 함
     const baseSpeed = difficultyRef.current?.speed ?? 3;
     const speed = coinShowerRef.current.active ? 2.2 : baseSpeed * 0.7;
@@ -427,7 +427,6 @@ export default function App() {
     }
 
     // Check alien blocking collisions (does not kill player, just blocks movement)
-    let blocked = false;
     for (let i = 0; i < aliensRef.current.length; i++) {
       const a = aliensRef.current[i];
       const ax = a.x;
@@ -552,7 +551,7 @@ export default function App() {
           justify-content: center;
           align-items: center;
         ">
-          <div style=\"width:100%;height:100%;border-radius:50%;background: radial-gradient(circle at 30% 30%, #ffffff 5%, #a5ffb8 30%, #00a04e 70%);border:2px solid rgba(255,255,255,0.08);box-shadow:0 6px 18px rgba(0,160,80,0.45);\"></div>
+          <div style="width:100%;height:100%;border-radius:50%;background: radial-gradient(circle at 30% 30%, #ffffff 5%, #a5ffb8 30%, #00a04e 70%);border:2px solid rgba(255,255,255,0.08);box-shadow:0 6px 18px rgba(0,160,80,0.45);"></div>
         </div>`;
       }
       // Render coins
@@ -569,7 +568,7 @@ export default function App() {
           justify-content: center;
           align-items: center;
         ">
-          <div style=\"width:100%;height:100%;border-radius:50%;background: radial-gradient(circle at 35% 35%, #ffff99, #ffdd00);border:1px solid rgba(255,255,0,0.3);box-shadow:0 0 8px rgba(255,215,0,0.8);\"></div>
+          <div style="width:100%;height:100%;border-radius:50%;background: radial-gradient(circle at 35% 35%, #ffff99, #ffdd00);border:1px solid rgba(255,255,0,0.3);box-shadow:0 0 8px rgba(255,215,0,0.8);"></div>
         </div>`;
       }
       // Render shields (방패 모양)
