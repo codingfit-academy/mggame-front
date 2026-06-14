@@ -11,6 +11,13 @@ const COIN_PICKUP_RANGE = 28; // 코인 자석 범위(픽셀): 클수록 더 멀
 const SHIELD_SIZE = 36;
 const SHIELD_DURATION = 10000; // 10초 무적
 const SHIELD_SPAWN_CHANCE = 1.0; // 150점 도달 시 등장 확률
+const MISSILE_WIDTH = 6;
+const MISSILE_HEIGHT = 18;
+const MISSILE_SPEED = 14;
+const PUNCH_AREA_RATIO = 1.4;       // 손 면적이 1.8배 이상으로 커지면 펀치로 판정
+const PUNCH_MIN_AREA = 0.012;       // 노이즈 방지: 손이 최소 이만큼은 화면을 차지해야 함
+const PUNCH_COOLDOWN_MS = 350;      // 연사 방지(이 시간 내 재발사 금지)
+const PUNCH_WINDOW_MS = 300;        // 면적 변화를 비교할 시간 윈도우
 const PLAYER_Y = GAME_HEIGHT - PLAYER_SIZE - 20;
 
 const GAME_STATES = {
@@ -28,6 +35,7 @@ export default function App() {
   const [isExploding, setIsExploding] = useState(false);
   const [coins, setCoins] = useState(0);
   const [shieldSecondsLeft, setShieldSecondsLeft] = useState(0);
+  const [cameraStatus, setCameraStatus] = useState('off'); // 'off' | 'requesting' | 'on' | 'error'
 
   const requestRef = useRef();
   const lastTimeRef = useRef();
@@ -47,6 +55,20 @@ export default function App() {
   const coinShowerRef = useRef({ active: false, rowsRemaining: 0, nextSpawnTime: 0 });
   const coinShowerTriggeredRef = useRef(false);
   const pauseStartedAtRef = useRef(0);
+  // 웹캠 조작(얼굴 추적 + 주먹 펀치)
+  const videoElRef = useRef(null);
+  const previewCanvasRef = useRef(null);
+  const faceDetectorRef = useRef(null);
+  const handDetectorRef = useRef(null);
+  const handAreaHistoryRef = useRef([]); // {time, area}
+  const lastFireTimeRef = useRef(0);
+  const cameraXRef = useRef(null);
+  const cameraEnabledRef = useRef(false);
+  const cameraRafRef = useRef(null);
+  const missilesRef = useRef([]);
+  const gameStateRef = useRef(GAME_STATES.START);
+
+  useEffect(() => { gameStateRef.current = gameState; }, [gameState]);
   const keysRef = useRef({});
   const difficultyRef = useRef({ speed: 3, spawnRate: 1500, lastSpawn: 0 });
   const scoreRef = useRef(0);
@@ -69,6 +91,14 @@ export default function App() {
       if (e.key === 'p' || e.key === 'P' || e.key === 'Escape') {
         if (gameState === GAME_STATES.PLAYING) pauseGame();
         else if (gameState === GAME_STATES.PAUSED) resumeGame();
+      }
+      // 스페이스바: 미사일 발사(키보드 폴백)
+      if (e.key === ' ' && !e.repeat && gameState === GAME_STATES.PLAYING) {
+        const now = performance.now();
+        if (now - lastFireTimeRef.current > PUNCH_COOLDOWN_MS) {
+          lastFireTimeRef.current = now;
+          fireMissile();
+        }
       }
     };
     const handleKeyUp = (e) => { keysRef.current[e.key] = false; };
@@ -107,6 +137,9 @@ export default function App() {
     shieldSecondsLeftRef.current = 0;
     coinShowerRef.current = { active: false, rowsRemaining: 0, nextSpawnTime: 0 };
     coinShowerTriggeredRef.current = false;
+    missilesRef.current = [];
+    handAreaHistoryRef.current = [];
+    lastFireTimeRef.current = 0;
     difficultyRef.current = { speed: 4, spawnRate: 1200, lastSpawn: performance.now() };
     scoreRef.current = 0;
     livesRef.current = 5;
@@ -127,6 +160,223 @@ export default function App() {
     setGameState(GAME_STATES.PLAYING);
   };
 
+
+  const startCameraTracking = () => {
+    const W = 200;   // 미리보기 캔버스 가로
+    const H = 150;   // 미리보기 캔버스 세로
+    const canvas = previewCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const v = videoElRef.current;
+    const VW = v.videoWidth || 320;
+    const VH = v.videoHeight || 240;
+    const sx = W / VW;
+    const sy = H / VH;
+
+    const tick = () => {
+      if (!cameraEnabledRef.current || !videoElRef.current) return;
+      const vid = videoElRef.current;
+      if (vid.readyState >= 2) {
+        // 영상을 좌우 반전(거울 모드)으로 미리보기에 그리기
+        ctx.save();
+        ctx.setTransform(-1, 0, 0, 1, W, 0);
+        ctx.drawImage(vid, 0, 0, W, H);
+        ctx.restore();
+
+        // 얼굴 감지
+        if (faceDetectorRef.current) {
+          try {
+            const result = faceDetectorRef.current.detectForVideo(vid, performance.now());
+            if (result.detections && result.detections.length > 0) {
+              // 가장 큰 얼굴 선택
+              let best = result.detections[0];
+              let bestArea = best.boundingBox.width * best.boundingBox.height;
+              for (let i = 1; i < result.detections.length; i++) {
+                const bb = result.detections[i].boundingBox;
+                const area = bb.width * bb.height;
+                if (area > bestArea) { best = result.detections[i]; bestArea = area; }
+              }
+              const box = best.boundingBox;
+              // 거울 모드 적용: 원본 x → 반전된 x
+              const mirroredX = VW - box.originX - box.width;
+              const centerX = mirroredX + box.width / 2;
+
+              // 얼굴 중심을 로켓 위치로 매핑(양쪽 10% 패딩)
+              const padding = 0.10;
+              let norm = (centerX / VW - padding) / (1 - 2 * padding);
+              norm = Math.max(0, Math.min(1, norm));
+              const target = norm * (GAME_WIDTH - PLAYER_SIZE);
+              const alpha = 0.35;
+              cameraXRef.current = cameraXRef.current == null
+                ? target
+                : cameraXRef.current * (1 - alpha) + target * alpha;
+
+              // 미리보기 위에 얼굴 박스 그리기(거울 좌표로)
+              const bx = mirroredX * sx;
+              const by = box.originY * sy;
+              const bw = box.width * sx;
+              const bh = box.height * sy;
+              ctx.lineWidth = 2.5;
+              ctx.strokeStyle = '#22ff88';
+              ctx.shadowColor = 'rgba(34, 255, 136, 0.8)';
+              ctx.shadowBlur = 6;
+              ctx.strokeRect(bx, by, bw, bh);
+              ctx.shadowBlur = 0;
+              // 박스 중심점(레이저 포인터 느낌)
+              ctx.fillStyle = '#22ff88';
+              ctx.beginPath();
+              ctx.arc(bx + bw / 2, by + bh / 2, 3, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          } catch { /* 감지 실패는 무시 */ }
+        }
+
+        // 손 감지 + 펀치(면적 급증) 판정
+        if (handDetectorRef.current && gameStateRef.current === GAME_STATES.PLAYING) {
+          try {
+            const handResult = handDetectorRef.current.detectForVideo(vid, performance.now());
+            if (handResult.landmarks && handResult.landmarks.length > 0) {
+              const lm = handResult.landmarks[0];
+              let minX = 1, maxX = 0, minY = 1, maxY = 0;
+              for (let k = 0; k < lm.length; k++) {
+                const p = lm[k];
+                if (p.x < minX) minX = p.x;
+                if (p.x > maxX) maxX = p.x;
+                if (p.y < minY) minY = p.y;
+                if (p.y > maxY) maxY = p.y;
+              }
+              const handW = maxX - minX;
+              const handH = maxY - minY;
+              const area = handW * handH; // 0..1 정규화 면적
+
+              // 시간 윈도우 내 면적 이력 유지
+              const now = performance.now();
+              const hist = handAreaHistoryRef.current;
+              hist.push({ time: now, area });
+              while (hist.length > 0 && now - hist[0].time > PUNCH_WINDOW_MS) hist.shift();
+
+              // 펀치 판정: 윈도우 시작 시점 면적 대비 현재 면적이 급증
+              if (hist.length >= 3 && area > PUNCH_MIN_AREA) {
+                const oldArea = hist[0].area;
+                if (oldArea > 0 && area / oldArea > PUNCH_AREA_RATIO
+                    && now - lastFireTimeRef.current > PUNCH_COOLDOWN_MS) {
+                  lastFireTimeRef.current = now;
+                  fireMissile();
+                  handAreaHistoryRef.current = []; // 재판정 방지
+                }
+              }
+
+              // 미리보기에 손 바운딩 박스(거울 좌표)
+              const hx = (1 - maxX) * W;
+              const hy = minY * H;
+              const hw = (maxX - minX) * W;
+              const hh = (maxY - minY) * H;
+              ctx.lineWidth = 2;
+              ctx.strokeStyle = '#ffaa00';
+              ctx.shadowColor = 'rgba(255,170,0,0.7)';
+              ctx.shadowBlur = 6;
+              ctx.strokeRect(hx, hy, hw, hh);
+              ctx.shadowBlur = 0;
+            } else {
+              handAreaHistoryRef.current = [];
+            }
+          } catch { /* 감지 실패는 무시 */ }
+        }
+      }
+      cameraRafRef.current = requestAnimationFrame(tick);
+    };
+    cameraRafRef.current = requestAnimationFrame(tick);
+  };
+
+  const enableCamera = async () => {
+    if (cameraStatus === 'on' || cameraStatus === 'requesting' || cameraStatus === 'loading') return;
+    setCameraStatus('requesting');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: 320, height: 240 },
+        audio: false,
+      });
+      if (!videoElRef.current) {
+        const v = document.createElement('video');
+        v.autoplay = true;
+        v.playsInline = true;
+        v.muted = true;
+        videoElRef.current = v;
+      }
+      videoElRef.current.srcObject = stream;
+      await videoElRef.current.play();
+
+      setCameraStatus('loading');
+      // MediaPipe Face Detector를 CDN에서 동적 로드
+      const visionUrl = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs';
+      const vision = await import(/* @vite-ignore */ visionUrl);
+      const filesetResolver = await vision.FilesetResolver.forVisionTasks(
+        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
+      );
+      const detector = await vision.FaceDetector.createFromOptions(filesetResolver, {
+        baseOptions: {
+          modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite',
+          delegate: 'GPU',
+        },
+        runningMode: 'VIDEO',
+      });
+      faceDetectorRef.current = detector;
+
+      // 주먹 펀치 감지를 위한 Hand Landmarker 로드
+      const handDetector = await vision.HandLandmarker.createFromOptions(filesetResolver, {
+        baseOptions: {
+          modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+          delegate: 'GPU',
+        },
+        numHands: 1,
+        runningMode: 'VIDEO',
+      });
+      handDetectorRef.current = handDetector;
+
+      cameraEnabledRef.current = true;
+      setCameraStatus('on');
+      // 미리보기 캔버스가 렌더된 다음 프레임에 트래킹 시작
+      requestAnimationFrame(() => startCameraTracking());
+    } catch (e) {
+      console.error('Camera enable failed:', e);
+      setCameraStatus('error');
+      cameraEnabledRef.current = false;
+    }
+  };
+
+  const disableCamera = () => {
+    cameraEnabledRef.current = false;
+    if (cameraRafRef.current) {
+      cancelAnimationFrame(cameraRafRef.current);
+      cameraRafRef.current = null;
+    }
+    if (videoElRef.current && videoElRef.current.srcObject) {
+      videoElRef.current.srcObject.getTracks().forEach(t => t.stop());
+      videoElRef.current.srcObject = null;
+    }
+    if (faceDetectorRef.current && faceDetectorRef.current.close) {
+      try { faceDetectorRef.current.close(); } catch { /* noop */ }
+    }
+    if (handDetectorRef.current && handDetectorRef.current.close) {
+      try { handDetectorRef.current.close(); } catch { /* noop */ }
+    }
+    faceDetectorRef.current = null;
+    handDetectorRef.current = null;
+    handAreaHistoryRef.current = [];
+    cameraXRef.current = null;
+    setCameraStatus('off');
+  };
+
+  // 컴포넌트 언마운트 시 카메라 정리
+  useEffect(() => {
+    return () => {
+      cameraEnabledRef.current = false;
+      if (cameraRafRef.current) cancelAnimationFrame(cameraRafRef.current);
+      if (videoElRef.current && videoElRef.current.srcObject) {
+        videoElRef.current.srcObject.getTracks().forEach(t => t.stop());
+      }
+    };
+  }, []);
 
   const pauseGame = () => {
     if (gameState !== GAME_STATES.PLAYING) return;
@@ -164,6 +414,7 @@ export default function App() {
         updateAliens(time);
         updateCoins(time);
         updateShields(time);
+        updateMissiles();
         updateCoinShower(time);
         updateInvincibilityTimer(time);
         checkCollisions();
@@ -191,7 +442,9 @@ export default function App() {
     const speed = 7;
     let x = playerXRef.current;
 
-    if (mouseXRef.current !== null) {
+    if (cameraEnabledRef.current && cameraXRef.current !== null) {
+      x = cameraXRef.current;
+    } else if (mouseXRef.current !== null) {
       x = mouseXRef.current;
     } else if (touchDirectionRef.current === 'left') {
       x -= speed;
@@ -329,6 +582,53 @@ export default function App() {
 
     // Remove coins that left screen
     coinsRef.current = coinsRef.current.filter(c => c.y <= GAME_HEIGHT + 20);
+  };
+
+  const fireMissile = () => {
+    if (gameStateRef.current !== GAME_STATES.PLAYING) return;
+    missilesRef.current.push({
+      id: Math.random(),
+      x: playerXRef.current + PLAYER_SIZE / 2 - MISSILE_WIDTH / 2,
+      y: PLAYER_Y - MISSILE_HEIGHT,
+    });
+  };
+
+  const updateMissiles = () => {
+    for (let i = missilesRef.current.length - 1; i >= 0; i--) {
+      const m = missilesRef.current[i];
+      m.y -= MISSILE_SPEED;
+      if (m.y + MISSILE_HEIGHT < 0) {
+        missilesRef.current.splice(i, 1);
+        continue;
+      }
+      // 운석 충돌(파괴 + 점수 +5)
+      let consumed = false;
+      for (let j = birdsRef.current.length - 1; j >= 0; j--) {
+        const b = birdsRef.current[j];
+        if (m.x < b.x + BIRD_SIZE && m.x + MISSILE_WIDTH > b.x
+            && m.y < b.y + BIRD_SIZE && m.y + MISSILE_HEIGHT > b.y) {
+          birdsRef.current.splice(j, 1);
+          scoreRef.current += 5;
+          setScore(scoreRef.current);
+          missilesRef.current.splice(i, 1);
+          consumed = true;
+          break;
+        }
+      }
+      if (consumed) continue;
+      // 외계인 충돌(파괴 + 점수 +20)
+      for (let j = aliensRef.current.length - 1; j >= 0; j--) {
+        const a = aliensRef.current[j];
+        if (m.x < a.x + ALIEN_SIZE && m.x + MISSILE_WIDTH > a.x
+            && m.y < a.y + ALIEN_SIZE && m.y + MISSILE_HEIGHT > a.y) {
+          aliensRef.current.splice(j, 1);
+          scoreRef.current += 20;
+          setScore(scoreRef.current);
+          missilesRef.current.splice(i, 1);
+          break;
+        }
+      }
+    }
   };
 
   const updateShields = () => {
@@ -571,6 +871,21 @@ export default function App() {
           <div style="width:100%;height:100%;border-radius:50%;background: radial-gradient(circle at 35% 35%, #ffff99, #ffdd00);border:1px solid rgba(255,255,0,0.3);box-shadow:0 0 8px rgba(255,215,0,0.8);"></div>
         </div>`;
       }
+      // Render missiles(미사일: 위로 발사)
+      for (let i = 0; i < missilesRef.current.length; i++) {
+        const m = missilesRef.current[i];
+        html += `<div style="
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: ${MISSILE_WIDTH}px;
+          height: ${MISSILE_HEIGHT}px;
+          transform: translate(${m.x}px, ${m.y}px);
+          background: linear-gradient(to top, rgba(255,255,255,0.0), #fff 30%, #00ffff);
+          border-radius: 3px;
+          box-shadow: 0 0 10px rgba(0, 255, 255, 0.9), 0 0 20px rgba(0, 200, 255, 0.6);
+        "></div>`;
+      }
       // Render shields (방패 모양)
       for (let i = 0; i < shieldsRef.current.length; i++) {
         const s = shieldsRef.current[i];
@@ -664,6 +979,11 @@ export default function App() {
             <div style={{ marginTop: '6px', fontSize: '16px', color: '#ffff00' }}>
               COINS: {coins}/10
             </div>
+            {cameraStatus === 'on' && (
+              <div style={{ marginTop: '6px', fontSize: '14px', color: '#22c55e' }}>
+                📷 CAM
+              </div>
+            )}
           </div>
         )}
 
@@ -702,13 +1022,13 @@ export default function App() {
         {gameState === GAME_STATES.START && (
           <div style={styles.overlay}>
             <div style={styles.titleContainer}>
-              <h1 style={styles.title}>메테오를 피해라</h1>
+              <h1 style={styles.title}>마테오 다이어트</h1>
               <h2 style={styles.subtitle}>이민건이 만듬</h2>
             </div>
             <div style={styles.instructionBox}>
               <p style={styles.instructions}>인계초등학교</p>
               <p style={styles.instructionKey}>만드는데 힘들었다.</p>
-              <p style={styles.instructions}>10%로 완성</p>
+              <p style={styles.instructions}>100%로 완성</p>
             </div>
             <button
               style={styles.button}
@@ -717,6 +1037,22 @@ export default function App() {
               onClick={resetGame}
             >
               MISSION START
+            </button>
+            <button
+              style={{
+                ...styles.button,
+                marginTop: '12px',
+                backgroundColor: cameraStatus === 'on' ? '#22c55e' : '#444',
+                fontSize: '14px',
+                padding: '10px 20px',
+              }}
+              onClick={() => cameraStatus === 'on' ? disableCamera() : enableCamera()}
+            >
+              {cameraStatus === 'on' ? '📷 얼굴 추적: ON' :
+                cameraStatus === 'requesting' ? '📷 권한 요청중...' :
+                cameraStatus === 'loading' ? '📷 얼굴 인식 모델 로드중...' :
+                cameraStatus === 'error' ? '📷 카메라 오류 (재시도)' :
+                '📷 얼굴로 조작'}
             </button>
           </div>
         )}
@@ -772,6 +1108,16 @@ export default function App() {
           </div>
         )}
       </div>
+
+      <canvas
+        ref={previewCanvasRef}
+        width={200}
+        height={150}
+        style={{
+          ...styles.cameraPreview,
+          display: cameraStatus === 'on' ? 'block' : 'none',
+        }}
+      />
     </div>
   );
 }
@@ -909,6 +1255,19 @@ const styles = {
     marginBottom: '10px',
     textShadow: '0 0 25px rgba(255, 215, 0, 0.8), 3px 3px 0px #553300',
     letterSpacing: '6px',
+  },
+  cameraPreview: {
+    position: 'fixed',
+    bottom: 20,
+    right: 20,
+    width: 200,
+    height: 150,
+    border: '2px solid #22ff88',
+    borderRadius: '10px',
+    boxShadow: '0 0 16px rgba(34, 255, 136, 0.6)',
+    backgroundColor: '#000',
+    zIndex: 60,
+    pointerEvents: 'none',
   },
   overlay: {
     position: 'absolute',
